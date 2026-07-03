@@ -1,0 +1,18 @@
+[Desktop Entry]
+Name=Infinitas
+GenericName=Web Browser
+Comment=Fast, private browser with offline archiving
+Exec=infinitas %u
+Icon=/usr/share/icons/hicolor/1024x1024/apps/infinitas.png
+Terminal=false
+Type=Application
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/ftp;
+StartupNotify=true
+StartupWMClass=Infinitas
+Keywords=browser;internet;web;infinitas;
+Actions=NewTab;
+
+[Desktop Action NewTab]
+Name=New Tab
+Exec=infinitas

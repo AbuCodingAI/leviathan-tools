@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Churro
+Comment=LeviathanOS Churro Desktop Environment
+Exec=/media/abu/CoderDrive/LeviathanOS/bin/churro-session
+Type=Application
+Icon=preferences-desktop

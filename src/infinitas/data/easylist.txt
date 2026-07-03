@@ -1,0 +1,252 @@
+[Adblock Plus 2.0]
+! Title: Infinitas EzList (bundled EasyList snapshot)
+! Description: Offline ad/tracker blocklist in EasyList syntax. Baked into
+!   data/adblock-rules.json at build time by tools/ezlist2json. NO network fetch.
+! This is a representative, hand-curated expansion (EasyList-style). Extend it by
+! dropping a fuller EasyList export in place of this file and rebuilding.
+! ---------------------------------------------------------------------------
+
+! =========================== NETWORK: ad servers ============================
+||doubleclick.net^
+||googlesyndication.com^
+||googleadservices.com^
+||googletagservices.com^
+||googletagmanager.com^
+||google-analytics.com^
+||g.doubleclick.net^
+||pagead2.googlesyndication.com^
+||partner.googleadservices.com^
+||adservice.google.com^
+||adservice.google.co.uk^
+||adservice.google.de^
+||pubads.g.doubleclick.net^
+||securepubads.g.doubleclick.net^
+||2mdn.net^
+||doubleclick.com^
+||invitemedia.com^
+||fls.doubleclick.net^
+||ad.doubleclick.net^
+||cm.g.doubleclick.net^
+||stats.g.doubleclick.net^
+
+! =========================== NETWORK: SSPs / DSPs ===========================
+||amazon-adsystem.com^
+||adnxs.com^
+||adnxs.net^
+||adsafeprotected.com^
+||moatads.com^
+||scorecardresearch.com^
+||quantserve.com^
+||quantcount.com^
+||criteo.com^
+||criteo.net^
+||taboola.com^
+||taboolasyndication.com^
+||outbrain.com^
+||pubmatic.com^
+||rubiconproject.com^
+||openx.net^
+||openx.com^
+||casalemedia.com^
+||smartadserver.com^
+||advertising.com^
+||adform.net^
+||adroll.com^
+||zedo.com^
+||bidswitch.net^
+||sharethrough.com^
+||3lift.com^
+||gumgum.com^
+||yieldmo.com^
+||teads.tv^
+||media.net^
+||contextweb.com^
+||spotxchange.com^
+||spotx.tv^
+||indexww.com^
+||districtm.io^
+||mgid.com^
+||revcontent.com^
+||adblade.com^
+||adsterra.com^
+||propellerads.com^
+||popads.net^
+||popcash.net^
+||exoclick.com^
+||juicyads.com^
+||trafficjunky.net^
+||yieldlab.net^
+||improvedigital.com^
+||sovrn.com^
+||lijit.com^
+||conversantmedia.com^
+||adtechus.com^
+||adtech.de^
+||emxdgt.com^
+||gammaplatform.com^
+||rhythmone.com^
+||undertone.com^
+||yieldmo.net^
+||nativo.com^
+||triplelift.com^
+||onetag.com^
+||adhese.com^
+||smaato.net^
+||inmobi.com^
+||applovin.com^
+||unityads.unity3d.com^
+||chartboost.com^
+||vungle.com^
+||mopub.com^
+||fyber.com^
+||tapjoy.com^
+||startapp.com^
+||adcolony.com^
+||mintegral.com^
+
+! =========================== NETWORK: analytics/track =======================
+||scorecardresearch.com^
+||hotjar.com^
+||hotjar.io^
+||mixpanel.com^
+||segment.com^
+||segment.io^
+||branch.io^
+||amplitude.com^
+||fullstory.com^
+||chartbeat.com^
+||chartbeat.net^
+||newrelic.com^
+||nr-data.net^
+||bugsnag.com^
+||sentry.io^
+||krxd.net^
+||demdex.net^
+||everesttech.net^
+||adsrvr.org^
+||serving-sys.com^
+||omtrdc.net^
+||2o7.net^
+||sc-static.net^
+||clarity.ms^
+||mouseflow.com^
+||crazyegg.com^
+||optimizely.com^
+||heapanalytics.com^
+||kissmetrics.com^
+||statcounter.com^
+||quantummetric.com^
+||yandex.ru/clck^
+||mc.yandex.ru^
+||google-analytics.com/collect^
+||googletagmanager.com/gtag/js^
+||facebook.com/tr^
+||connect.facebook.net/signals^
+||analytics.tiktok.com^
+||bat.bing.com^
+||px.ads.linkedin.com^
+||snap.licdn.com^
+||t.co/i/adsct^
+||pixel.quantserve.com^
+||b.scorecardresearch.com^
+||cdn.branch.io^
+||api.mixpanel.com^
+
+! =========================== NETWORK: path/keyword rules ====================
+/ads/*
+/adserver/*
+/pagead/*
+/adframe/*
+/adservice/*
+/banner_ad*
+/banners/*
+/popunder/*
+/prebid*
+/gpt/pubads*
+/adsbygoogle*
+/analytics.js|
+/gtm.js|
+/beacon.js|
+/track.gif|
+/pixel.gif|
+/1x1.gif|
+&adnet=
+?advertising=
+||cdn.*/ads/*
+
+! =========================== NETWORK: with options ==========================
+||adnxs.com^$third-party
+||scorecardresearch.com^$third-party
+||facebook.net/*/fbevents.js$script
+||googletagmanager.com^$script,third-party
+||taboola.com^$script,image,third-party
+||outbrain.com^$third-party
+||advertising.com^$third-party
+||serving-sys.com^$image,third-party
+||yimg.com/*/analytics$script
+||amazon-adsystem.com^$domain=~amazon.com
+||doubleclick.net^$domain=~youtube.com|~google.com
+/ad.php|$script,third-party
+||example-ads.com^$popup,third-party
+
+! =========================== EXCEPTIONS (@@) ================================
+@@||google-analytics.com/analytics.js$domain=paypal.com
+@@||googletagmanager.com^$domain=chase.com
+@@||adservice.google.com/adsid/integrator.js$script
+@@||amazon-adsystem.com^$domain=amazon.com|amazon.co.uk
+@@||criteo.com^$domain=criteo-partner-checkout.com
+
+! =========================== ELEMENT HIDING (generic) =======================
+##.ad
+##.ads
+##.adsbox
+##.ad-banner
+##.ad-container
+##.ad-wrapper
+##.advertisement
+##.advert
+##.sponsored-content
+##.sponsored-post
+##.banner-ads
+##.google-ads
+##.adsbygoogle
+##.dfp-ad
+##.outbrain
+##.taboola
+##.trc_related_container
+##div[id^="google_ads_"]
+##div[id^="div-gpt-ad"]
+##iframe[src*="doubleclick.net"]
+##iframe[src*="googlesyndication"]
+##.OUTBRAIN
+##[data-ad-slot]
+##[aria-label="Advertisement"]
+
+! =========================== ELEMENT HIDING (site-specific) =================
+youtube.com##.ytd-promoted-sparkles-web-renderer
+youtube.com##ytd-display-ad-renderer
+youtube.com##.ytp-ad-module
+facebook.com##div[data-pagelet="RightRail"]
+reddit.com##.promotedlink
+reddit.com##[data-testid="post-container"][data-promoted="true"]
+twitter.com##[data-testid="placementTracking"]
+forbes.com##.fbs-ad
+cnn.com##.ad-slot
+weather.com##.ad-wrap
+~mail.google.com,google.com##.commercial-unit-desktop-top
+
+! Google sponsored-result hiding (preserves prior built-in cosmetic block)
+google.com,google.co.uk,google.ca,google.com.au,google.de,google.fr,google.co.in###tads, #tadsb, #bottomads, #rhs .cu-container, .cu-container, [data-text-ad], .commercial-unit-desktop-top, .commercial-unit-desktop-rhs, .pla-unit, .pla-hovercard-content-ellip, .shopping-carousel, div[aria-label='Ads']
+
+! =========================== UNSUPPORTED (skipped + logged) =================
+! cosmetic exception - no WebKit equivalent
+example.com#@#.ad
+! extended CSS / scriptlet filters - WebKit content blocker can't run these
+example.com##.item:has(> .sponsored)
+example.com#?#.container:-abp-has(.ad)
+example.com##+js(nano-setInterval-booster)
+example.com##.box:style(display:none !important)
+! option WebKit can't express
+||tracker.example^$removeparam=fbclid
+||redirect.example^$redirect=noopjs
+||csp.example^$csp=script-src 'self'

@@ -1,7 +1,10 @@
 # LeviathanOS Tools
 
-Prebuilt binaries of LeviathanOS's own native tools — **v4.3**.
+Native tools of LeviathanOS — **v4.3** — **binaries *and* full source**.
 Lightweight tools for a lightweight OS (old hardware, especially old Intel Macs).
+
+- Prebuilt binaries in [`bin/`](bin/) — for x86-64 Linux, just run them.
+- Complete source in [`src/`](src/) — build it yourself with `make`.
 
 ## What's in `bin/`
 
@@ -27,12 +30,22 @@ chmod +x bin/*
 
 These are built for **x86-64 Linux** (GTK3/GTK4 + WebKitGTK userspace assumed).
 
+## Build from source
+
+The GUI tools need the usual dev headers (GTK3/GTK4, WebKitGTK, X11, zstd):
+
+```sh
+make            # builds everything into bin/
+make dev        # or build a single tool
+```
+
+Source lives in [`src/`](src/), shared bits in [`third_party/`](third_party/),
+build rules in the [`Makefile`](Makefile).
+
 ## License
 
 GPLv3, with an Additional Permission waiving attribution — see [`LICENSE`](LICENSE).
 
-### Corresponding source (GPLv3 §6)
-
-These are GPLv3 binaries. The **complete corresponding source** is available on
-request, and is being published at `github.com/AbuCodingAI/LeviathanOS`
-(source ships next). This notice is the written offer required by the GPL.
+The **complete corresponding source** for every binary in `bin/` is included in
+this repository under `src/` — so the GPL is fully satisfied: binaries and the
+source that builds them, together, in one place.

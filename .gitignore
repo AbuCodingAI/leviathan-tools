@@ -1,0 +1,9 @@
+# Build artifacts — never commit these
+*.o
+*.a
+*.so
+*.d
+*.obj
+# Editor / OS cruft
+*.swp
+.DS_Store
