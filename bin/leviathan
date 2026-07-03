@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# LeviathanOS Configuration Menu
+# Command: leviathan config
+set -euo pipefail
+
+CONFIG_DIR="/etc/leviathanos"
+CONFIG_FILE="$CONFIG_DIR/leviathanos.conf"
+
+log() { printf '[leviathanos config] %s\n' "$*" >&2; }
+error() { log "ERROR: $*"; exit 1; }
+
+require_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    exec sudo -E -- "$0" "$@"
+  fi
+}
+
+init_config() {
+  mkdir -p "$CONFIG_DIR"
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    cat >"$CONFIG_FILE" <<'EOF'
+# LeviathanOS Package Manager Configuration
+apt_enabled=true
+flatpak_enabled=false
+snap_enabled=false
+pip_system_packages=true
+EOF
+  fi
+}
+
+load_config() {
+  # shellcheck source=/dev/null
+  source "$CONFIG_FILE" 2>/dev/null || true
+  apt_enabled=${apt_enabled:-false}
+  flatpak_enabled=${flatpak_enabled:-false}
+  snap_enabled=${snap_enabled:-false}
+  pip_system_packages=${pip_system_packages:-true}
+}
+
+save_config() {
+  cat >"$CONFIG_FILE" <<EOF
+# LeviathanOS Package Manager Configuration
+apt_enabled=$apt_enabled
+flatpak_enabled=$flatpak_enabled
+snap_enabled=$snap_enabled
+pip_system_packages=$pip_system_packages
+EOF
+}
+
+configure_apt() {
+  if [[ "$apt_enabled" == "true" ]]; then
+    log "Configuring apt to work without sudo for user installs…"
+    # Already handled by system if user is in sudo group
+    log "✓ apt configured (requires sudo for install, but system manages packages)"
+  fi
+}
+
+configure_flatpak() {
+  if [[ "$flatpak_enabled" == "true" ]]; then
+    log "Installing flatpak…"
+    apt-get install -y flatpak flatpak-xdg-utils 2>/dev/null || error "Failed to install flatpak"
+    log "✓ flatpak installed"
+  else
+    log "Removing flatpak…"
+    apt-get purge -y flatpak 2>/dev/null || true
+    log "✓ flatpak removed"
+  fi
+}
+
+configure_snap() {
+  if [[ "$snap_enabled" == "true" ]]; then
+    log "Installing snapd…"
+    apt-get install -y snapd 2>/dev/null || error "Failed to install snapd"
+    systemctl enable snapd.socket 2>/dev/null || true
+    log "✓ snapd installed and enabled"
+  else
+    log "Removing snapd…"
+    systemctl disable snapd.socket 2>/dev/null || true
+    apt-get purge -y snapd 2>/dev/null || true
+    rm -rf /var/cache/snapd /var/snap /var/lib/snapd /root/snap 2>/dev/null || true
+    log "✓ snapd removed"
+  fi
+}
+
+configure_pip() {
+  if [[ "$pip_system_packages" == "true" ]]; then
+    log "Enabling pip system-wide installs (no --break-system-packages needed)…"
+    # Correct global pip config path is /etc/pip.conf (a FILE) — NOT /etc/pip/.
+    cat >/etc/pip.conf <<'EOF'
+[global]
+break-system-packages = true
+EOF
+    # Belt + suspenders for shells/tools that predate the config key.
+    install -d -m 0755 /etc/profile.d
+    echo 'export PIP_BREAK_SYSTEM_PACKAGES=1' > /etc/profile.d/leviathanos-pip.sh
+    chmod 0644 /etc/profile.d/leviathanos-pip.sh
+    log "✓ pip installs system-wide (pip install X just works)"
+  else
+    log "Restricting pip to virtual environments…"
+    rm -f /etc/pip.conf /etc/pip/pip.conf /etc/profile.d/leviathanos-pip.sh 2>/dev/null || true
+    log "✓ pip restricted to venvs"
+  fi
+}
+
+show_menu() {
+  clear
+  echo "╔════════════════════════════════════════╗"
+  echo "║    LeviathanOS Package Manager Setup   ║"
+  echo "╚════════════════════════════════════════╝"
+  echo ""
+  echo "Configure which package managers to install:"
+  echo ""
+
+  apt_status="[✓]" && [[ "$apt_enabled" != "true" ]] && apt_status="[ ]"
+  flatpak_status="[✓]" && [[ "$flatpak_enabled" != "true" ]] && flatpak_status="[ ]"
+  snap_status="[✓]" && [[ "$snap_enabled" != "true" ]] && snap_status="[ ]"
+  pip_status="[✓]" && [[ "$pip_system_packages" != "true" ]] && pip_status="[ ]"
+
+  echo " $apt_status 1. apt (system packages)"
+  echo " $flatpak_status 2. flatpak (sandboxed apps)"
+  echo " $snap_status 3. snap (snappy packages)"
+  echo " $pip_status 4. pip (Python packages, system-wide)"
+  echo ""
+  echo " [S] Save & Apply Configuration"
+  echo " [Q] Quit without saving"
+  echo ""
+}
+
+toggle_apt() { apt_enabled=$([[ "$apt_enabled" == "true" ]] && echo "false" || echo "true"); }
+toggle_flatpak() { flatpak_enabled=$([[ "$flatpak_enabled" == "true" ]] && echo "false" || echo "true"); }
+toggle_snap() { snap_enabled=$([[ "$snap_enabled" == "true" ]] && echo "false" || echo "true"); }
+toggle_pip() { pip_system_packages=$([[ "$pip_system_packages" == "true" ]] && echo "false" || echo "true"); }
+
+main() {
+  require_root "$@"
+  init_config
+  load_config
+
+  while true; do
+    show_menu
+    read -p "Enter choice [1-4, S, Q]: " choice
+    case "$choice" in
+      1) toggle_apt ;;
+      2) toggle_flatpak ;;
+      3) toggle_snap ;;
+      4) toggle_pip ;;
+      [Ss])
+        log "Saving configuration…"
+        save_config
+        configure_apt
+        configure_flatpak
+        configure_snap
+        configure_pip
+        log "✓ Configuration applied successfully"
+        log "Run 'leviathan config' anytime to reconfigure"
+        exit 0
+        ;;
+      [Qq]) exit 0 ;;
+      *) echo "Invalid choice, try again" ;;
+    esac
+  done
+}
+
+main "$@"
