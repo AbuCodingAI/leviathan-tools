@@ -114,7 +114,9 @@ typedef struct {
     int error;
 } EvalCtx;
 
-static double parse_expr(EvalCtx *e);
+static double parse_expr(EvalCtx *e);      /* +/- level                    */
+static double parse_compare(EvalCtx *e);   /* =,<>,<,>,<=,>= (top level)    */
+static double parse_power(EvalCtx *e);     /* ^ (between * / and primary)   */
 
 static void skipws(EvalCtx *e) {
     while (e->s[e->i] == ' ' || e->s[e->i] == '\t') e->i++;
@@ -170,6 +172,54 @@ static double apply_func(const char *name, double *v, int n) {
         int nd = (n > 1) ? (int)v[1] : 0;
         double f = pow(10.0, nd);
         return round(v[0] * f) / f;
+    } else if (strcmp(u, "ROUNDUP") == 0) {
+        if (n == 0) return 0;
+        double f = pow(10.0, (n > 1) ? (int)v[1] : 0);
+        return (v[0] < 0 ? -ceil(-v[0] * f) : ceil(v[0] * f)) / f;
+    } else if (strcmp(u, "ROUNDDOWN") == 0 || strcmp(u, "TRUNC") == 0) {
+        if (n == 0) return 0;
+        double f = pow(10.0, (n > 1) ? (int)v[1] : 0);
+        return (v[0] < 0 ? -floor(-v[0] * f) : floor(v[0] * f)) / f;
+    /* ---- logic ---- */
+    } else if (strcmp(u, "IF") == 0) {
+        if (n >= 3) return v[0] != 0 ? v[1] : v[2];
+        if (n == 2) return v[0] != 0 ? v[1] : 0;
+        return 0;
+    } else if (strcmp(u, "AND") == 0) {
+        for (int i = 0; i < n; i++) { if (v[i] == 0) return 0; }
+        return n ? 1 : 0;
+    } else if (strcmp(u, "OR") == 0) {
+        for (int i = 0; i < n; i++) { if (v[i] != 0) return 1; }
+        return 0;
+    } else if (strcmp(u, "NOT") == 0) {
+        return (n && v[0] != 0) ? 0 : 1;
+    } else if (strcmp(u, "COUNTA") == 0) {
+        return n;                            /* non-empty cells passed in */
+    /* ---- math ---- */
+    } else if (strcmp(u, "SQRT") == 0) {
+        return (n && v[0] >= 0) ? sqrt(v[0]) : 0;
+    } else if (strcmp(u, "POWER") == 0 || strcmp(u, "POW") == 0) {
+        return n >= 2 ? pow(v[0], v[1]) : 0;
+    } else if (strcmp(u, "MOD") == 0) {
+        return (n >= 2 && v[1] != 0) ? fmod(v[0], v[1]) : 0;
+    } else if (strcmp(u, "INT") == 0 || strcmp(u, "FLOOR") == 0) {
+        return n ? floor(v[0]) : 0;
+    } else if (strcmp(u, "CEILING") == 0 || strcmp(u, "CEIL") == 0) {
+        return n ? ceil(v[0]) : 0;
+    } else if (strcmp(u, "EXP") == 0) {
+        return n ? exp(v[0]) : 0;
+    } else if (strcmp(u, "LN") == 0) {
+        return (n && v[0] > 0) ? log(v[0]) : 0;
+    } else if (strcmp(u, "LOG10") == 0) {
+        return (n && v[0] > 0) ? log10(v[0]) : 0;
+    } else if (strcmp(u, "LOG") == 0) {
+        if (!n || v[0] <= 0) return 0;
+        if (n >= 2 && v[1] > 0 && v[1] != 1) return log(v[0]) / log(v[1]);
+        return log10(v[0]);
+    } else if (strcmp(u, "PI") == 0) {
+        return M_PI;
+    } else if (strcmp(u, "SIGN") == 0) {
+        return n ? ((v[0] > 0) - (v[0] < 0)) : 0;
     }
     return 0;   /* unknown function */
 }
@@ -203,7 +253,7 @@ static double eval_function(EvalCtx *e, const char *name) {
     if (e->s[e->i] != ')') {
         do {
             if (!try_range(e, vals, &count)) {
-                double v = parse_expr(e);
+                double v = parse_compare(e);   /* args may be A1>5, IF(...), etc. */
                 if (count < MAX_ROWS * MAX_COLS) vals[count++] = v;
             }
             skipws(e);
@@ -220,13 +270,13 @@ static double parse_prim(EvalCtx *e) {
 
     if (ch == '(') {
         e->i++;
-        double v = parse_expr(e);
+        double v = parse_compare(e);
         skipws(e);
         if (e->s[e->i] == ')') e->i++; else e->error = 1;
         return v;
     }
-    if (ch == '+') { e->i++; return parse_prim(e); }
-    if (ch == '-') { e->i++; return -parse_prim(e); }
+    if (ch == '+') { e->i++; return parse_power(e); }
+    if (ch == '-') { e->i++; return -parse_power(e); }
 
     if (isalpha((unsigned char)ch)) {
         char name[32];
@@ -265,15 +315,23 @@ static double parse_prim(EvalCtx *e) {
     return 0;
 }
 
+/* exponent: right-associative so 2^3^2 = 2^(3^2). */
+static double parse_power(EvalCtx *e) {
+    double base = parse_prim(e);
+    skipws(e);
+    if (e->s[e->i] == '^') { e->i++; return pow(base, parse_power(e)); }
+    return base;
+}
+
 static double parse_term(EvalCtx *e) {
-    double v = parse_prim(e);
+    double v = parse_power(e);
     for (;;) {
         skipws(e);
         char c = e->s[e->i];
-        if (c == '*') { e->i++; v *= parse_prim(e); }
+        if (c == '*') { e->i++; v *= parse_power(e); }
         else if (c == '/') {
             e->i++;
-            double d = parse_prim(e);
+            double d = parse_power(e);
             v = (d != 0.0) ? v / d : 0.0;       /* guard div-by-zero */
         } else break;
     }
@@ -292,13 +350,33 @@ static double parse_expr(EvalCtx *e) {
     return v;
 }
 
+/* Comparisons sit above +/-, produce 1.0 (true) / 0.0 (false), and are the
+ * building block for IF/AND/OR. Single, non-associative: A1>B1, A1<=10, x<>0. */
+static double parse_compare(EvalCtx *e) {
+    double v = parse_expr(e);
+    skipws(e);
+    char c = e->s[e->i];
+    if (c == '=' || c == '<' || c == '>') {
+        e->i++;
+        char c2 = e->s[e->i];
+        if (c == '<' && c2 == '=') { e->i++; return parse_expr(e) >= v ? 1 : 0; }
+        if (c == '<' && c2 == '>') { e->i++; return parse_expr(e) != v ? 1 : 0; }
+        if (c == '>' && c2 == '=') { e->i++; return v >= parse_expr(e) ? 1 : 0; }
+        double r = parse_expr(e);
+        if (c == '=') return v == r ? 1 : 0;
+        if (c == '<') return v <  r ? 1 : 0;
+        return v > r ? 1 : 0;
+    }
+    return v;
+}
+
 static double eval_formula(TabulaApp *app, const char *formula) {
     const char *p = formula;
     while (*p == ' ') p++;
     if (*p == '=') p++;
     EvalCtx e = { p, 0, app, 0 };
-    return parse_expr(&e);
-    /* sanity: eval "=1+2*3" => 7 ; "=SUM(A1:A3)" over 1,2,3 => 6 */
+    return parse_compare(&e);
+    /* sanity: "=1+2*3"=>7 ; "=SUM(A1:A3)" over 1,2,3 =>6 ; "=IF(A1>10,1,0)" */
 }
 
 static void fmt_num(double v, char *out, size_t n) {
@@ -493,6 +571,9 @@ static const char *HTML_HEAD =
 "<button class='btn' onclick='newSheet()'>NEW</button>"
 "<button class='btn' onclick='recalc()'>RECALC</button>"
 "<button class='btn' onclick='launchGenie()'>GENIE</button>"
+"<button class='btn' onclick='launchChart()'>CHART</button>"
+"<button class='btn' onclick='addRow()'>+ROW</button>"
+"<button class='btn' onclick='addCol()'>+COL</button>"
 "<button class='btn' onclick='showAbout()'>ABOUT</button>"
 "<input id='search-box' type='text' placeholder='Ctrl+F Search...' onkeyup='searchCells(this.value)'>"
 "</div>"
@@ -503,7 +584,7 @@ static const char *HTML_HEAD =
 "<table id='grid'>";
 
 static const char *SCRIPT_FMT =
-"</table><div id='genie-result'></div></div>"
+"</table><div id='chart-panel'></div><div id='genie-result'></div></div>"
 "<div id='aboutov' onclick='if(event.target===this)closeAbout()'>"
 "<div id='aboutbox'>"
 "<div class='atitle'>Tabula &mdash; part of LeviathanOS</div>"
@@ -548,6 +629,36 @@ static const char *SCRIPT_FMT =
 "function newSheet(){if(confirm('Clear the entire spreadsheet?')){window.webkit.messageHandlers.newSheet.postMessage('');}}"
 "function recalc(){flush();window.webkit.messageHandlers.recalc.postMessage('');}"
 "function launchGenie(){flush();window.webkit.messageHandlers.genie.postMessage('');}"
+"function launchChart(){flush();window.webkit.messageHandlers.chart.postMessage('');}"
+"function addRow(){flush();window.webkit.messageHandlers.addRow.postMessage('');}"
+"function addCol(){flush();window.webkit.messageHandlers.addCol.postMessage('');}"
+/* renderChart(labels[],values[],type) — canvas bar/line/pie, injected from C */
+"function renderChart(labels,values,type){var p=document.getElementById('chart-panel');"
+"p.innerHTML='';if(!values.length){p.innerHTML='<p style=\"color:#33ff33\">No numeric data in that range.</p>';return;}"
+"var cv=document.createElement('canvas');cv.width=680;cv.height=360;"
+"cv.style.border='1px solid #33ff33';cv.style.background='#030705';cv.style.marginTop='8px';p.appendChild(cv);"
+"var x=cv.getContext('2d'),W=cv.width,H=cv.height,pad=44,n=values.length;"
+"var cols=['#33ff33','#2bd4d4','#d4d42b','#d42bd4','#2b6bd4','#d4802b','#8fff8f','#ff6b6b'];"
+"x.font='11px monospace';x.fillStyle='#8fbf8f';"
+"if(type==='pie'){var tot=0;for(var i=0;i<n;i++)tot+=Math.abs(values[i]);"
+"var a=-Math.PI/2,cx=W*0.36,cy=H/2,rd=Math.min(W*0.6,H)/2-pad;"
+"for(var i=0;i<n;i++){var sl=Math.abs(values[i])/(tot||1)*2*Math.PI;x.fillStyle=cols[i%cols.length];"
+"x.beginPath();x.moveTo(cx,cy);x.arc(cx,cy,rd,a,a+sl);x.closePath();x.fill();a+=sl;"
+"x.fillStyle=cols[i%cols.length];x.fillRect(W*0.72,30+i*20,12,12);"
+"x.fillStyle='#cfe';x.fillText((labels[i]||('#'+(i+1)))+' ('+values[i]+')',W*0.72+18,40+i*20);}return;}"
+"var mx=Math.max.apply(null,values.concat([0])),mn=Math.min.apply(null,values.concat([0]));"
+"if(mx===mn)mx=mn+1;"
+"function X(i){return pad+(i+0.5)*((W-2*pad)/n);}"
+"function Y(v){return H-pad-((v-mn)/(mx-mn))*(H-2*pad);}"
+"x.strokeStyle='#1b3a24';x.beginPath();x.moveTo(pad,Y(0));x.lineTo(W-pad,Y(0));"
+"x.moveTo(pad,pad);x.lineTo(pad,H-pad);x.stroke();"
+"var bw=(W-2*pad)/n*0.6;"
+"for(var i=0;i<n;i++){var px=X(i),py=Y(values[i]);"
+"if(type==='line'){x.fillStyle='#33ff33';x.fillRect(px-2,py-2,4,4);"
+"if(i>0){x.strokeStyle='#33ff33';x.beginPath();x.moveTo(X(i-1),Y(values[i-1]));x.lineTo(px,py);x.stroke();}}"
+"else{x.fillStyle=cols[i%cols.length];x.fillRect(px-bw/2,Math.min(py,Y(0)),bw,Math.abs(py-Y(0)));}"
+"x.save();x.fillStyle='#8fbf8f';x.translate(px,H-pad+4);x.textAlign='center';"
+"x.fillText((labels[i]||('#'+(i+1))).substring(0,9),0,8);x.restore();}}"
 "function searchCells(q){document.querySelectorAll('td').forEach(function(cell){"
 "if(q&&cell.innerText.toLowerCase().indexOf(q.toLowerCase())!==-1){cell.classList.add('highlight');}"
 "else{cell.classList.remove('highlight');}});}"
@@ -667,6 +778,28 @@ static void clear_sheet(TabulaApp *app) {
         }
 }
 
+/* Grow the visible grid so it covers all populated cells (with a little
+ * headroom), never shrinking below the comfortable default. Called after a
+ * load so imported files aren't clipped by the initial view size. */
+#define DEFAULT_ROWS 40
+#define DEFAULT_COLS 16
+static void fit_dimensions(TabulaApp *app) {
+    int maxr = 0, maxc = 0;
+    for (int r = 0; r < MAX_ROWS; r++)
+        for (int c = 0; c < MAX_COLS; c++)
+            if (app->sheet.data[r][c][0] || app->sheet.formula[r][c][0]) {
+                if (r > maxr) maxr = r;
+                if (c > maxc) maxc = c;
+            }
+    int wr = maxr + 2, wc = maxc + 2;
+    if (wr < DEFAULT_ROWS) wr = DEFAULT_ROWS;
+    if (wc < DEFAULT_COLS) wc = DEFAULT_COLS;
+    if (wr > MAX_ROWS) wr = MAX_ROWS;
+    if (wc > MAX_COLS) wc = MAX_COLS;
+    if (wr > app->sheet.rows) app->sheet.rows = wr;
+    if (wc > app->sheet.cols) app->sheet.cols = wc;
+}
+
 static void load_csv(TabulaApp *app, const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) { g_print("Tabula: cannot read %s\n", path); return; }
@@ -708,6 +841,7 @@ static void load_csv(TabulaApp *app, const char *path) {
         g_strlcpy(app->sheet.data[r][c], field, MAX_CELL_LEN);
     }
     fclose(f);
+    fit_dimensions(app);
     g_print("Tabula: loaded %s\n", path);
 }
 
@@ -805,6 +939,7 @@ static void load_tab(TabulaApp *app, const char *path) {
     }
     fclose(f);
     recompute_all(app);           /* rebuild computed values from live formulas */
+    fit_dimensions(app);
     g_print("Tabula: loaded %s\n", path);
 }
 
@@ -1056,6 +1191,110 @@ static void on_genie_clicked(WebKitUserContentManager *manager,
     g_object_unref(value);
 }
 
+/* ---- Chart: render a cell range as a bar / line / pie canvas ---- */
+static int parse_range_bounds(const char *range,
+                              int *sr, int *sc, int *er, int *ec) {
+    char c1[8], c2[8]; int r1, r2;
+    if (sscanf(range, "%7[A-Za-z]%d:%7[A-Za-z]%d", c1, &r1, c2, &r2) == 4) {
+        *sc = col_to_index(c1); *ec = col_to_index(c2);
+        *sr = r1 - 1;           *er = r2 - 1;
+    } else if (sscanf(range, "%7[A-Za-z]%d", c1, &r1) == 2) {
+        *sc = *ec = col_to_index(c1); *sr = *er = r1 - 1;
+    } else {
+        return 0;
+    }
+    if (*sc > *ec) { int t = *sc; *sc = *ec; *ec = t; }
+    if (*sr > *er) { int t = *sr; *sr = *er; *er = t; }
+    return 1;
+}
+
+static void on_chart_clicked(WebKitUserContentManager *manager,
+                             WebKitJavascriptResult *js_result, TabulaApp *app) {
+    (void)manager;
+    JSCValue *value = webkit_javascript_result_get_js_value(js_result);
+
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Chart",
+        app->window, GTK_DIALOG_MODAL,
+        "_Create", GTK_RESPONSE_ACCEPT, "_Cancel", GTK_RESPONSE_CANCEL, NULL);
+    GtkBox *content = GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog)));
+    gtk_container_set_border_width(GTK_CONTAINER(content), 12);
+
+    GtkEntry *lab = GTK_ENTRY(gtk_entry_new()); gtk_entry_set_text(lab, "A1:A6");
+    GtkEntry *val = GTK_ENTRY(gtk_entry_new()); gtk_entry_set_text(val, "B1:B6");
+    GtkComboBoxText *type = GTK_COMBO_BOX_TEXT(gtk_combo_box_text_new());
+    gtk_combo_box_text_append(type, "bar",  "Bar");
+    gtk_combo_box_text_append(type, "line", "Line");
+    gtk_combo_box_text_append(type, "pie",  "Pie");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(type), 0);
+
+    gtk_box_pack_start(content, gtk_label_new("Label range (e.g. A1:A6):"), FALSE, FALSE, 0);
+    gtk_box_pack_start(content, GTK_WIDGET(lab), FALSE, FALSE, 0);
+    gtk_box_pack_start(content, gtk_label_new("Value range (e.g. B1:B6):"), FALSE, FALSE, 0);
+    gtk_box_pack_start(content, GTK_WIDGET(val), FALSE, FALSE, 0);
+    gtk_box_pack_start(content, gtk_label_new("Chart type:"), FALSE, FALSE, 0);
+    gtk_box_pack_start(content, GTK_WIDGET(type), FALSE, FALSE, 0);
+    gtk_widget_show_all(dialog);
+
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        gchar *ty = gtk_combo_box_text_get_active_text(type);
+        GString *labs = g_string_new("["), *vals = g_string_new("[");
+        int sr, sc, er, ec, first = 1;
+
+        if (parse_range_bounds(gtk_entry_get_text(lab), &sr, &sc, &er, &ec))
+            for (int r = sr; r <= er; r++)
+                for (int c = sc; c <= ec; c++) {
+                    if (r < 0 || r >= MAX_ROWS || c < 0 || c >= MAX_COLS) continue;
+                    if (!first) g_string_append_c(labs, ',');
+                    first = 0;
+                    char *esc = js_escape(app->sheet.data[r][c]);
+                    g_string_append_printf(labs, "'%s'", esc);
+                    g_free(esc);
+                }
+        g_string_append_c(labs, ']');
+
+        first = 1;
+        if (parse_range_bounds(gtk_entry_get_text(val), &sr, &sc, &er, &ec))
+            for (int r = sr; r <= er; r++)
+                for (int c = sc; c <= ec; c++) {
+                    if (r < 0 || r >= MAX_ROWS || c < 0 || c >= MAX_COLS) continue;
+                    if (!first) g_string_append_c(vals, ',');
+                    first = 0;
+                    char b[64];
+                    fmt_num(parse_cell_value(app->sheet.data[r][c]), b, sizeof b);
+                    g_string_append(vals, b);
+                }
+        g_string_append_c(vals, ']');
+
+        GString *js = g_string_new(NULL);
+        g_string_append_printf(js, "renderChart(%s,%s,'%s');",
+                               labs->str, vals->str, ty ? ty : "bar");
+        webkit_web_view_evaluate_javascript(app->web_view, js->str, -1,
+                                            NULL, NULL, NULL, NULL, NULL);
+        g_string_free(js, TRUE);
+        g_string_free(labs, TRUE);
+        g_string_free(vals, TRUE);
+        g_free(ty);
+    }
+    gtk_widget_destroy(dialog);
+    g_object_unref(value);
+}
+
+static void on_add_row(WebKitUserContentManager *manager,
+                       WebKitJavascriptResult *js_result, TabulaApp *app) {
+    (void)manager;
+    JSCValue *value = webkit_javascript_result_get_js_value(js_result);
+    if (app->sheet.rows < MAX_ROWS) { app->sheet.rows++; reload_grid(app); }
+    g_object_unref(value);
+}
+
+static void on_add_col(WebKitUserContentManager *manager,
+                       WebKitJavascriptResult *js_result, TabulaApp *app) {
+    (void)manager;
+    JSCValue *value = webkit_javascript_result_get_js_value(js_result);
+    if (app->sheet.cols < MAX_COLS) { app->sheet.cols++; reload_grid(app); }
+    g_object_unref(value);
+}
+
 /* ================================================================== *
  * UI setup
  * ================================================================== */
@@ -1086,7 +1325,8 @@ static void setup_ui(TabulaApp *app) {
         webkit_web_view_get_user_content_manager(app->web_view);
 
     const char *handlers[] = { "cellEdit", "fbarEdit", "save", "exportCsv",
-                               "openFile", "genie", "recalc", "newSheet" };
+                               "openFile", "genie", "recalc", "newSheet",
+                               "chart", "addRow", "addCol" };
     for (unsigned i = 0; i < G_N_ELEMENTS(handlers); i++)
         webkit_user_content_manager_register_script_message_handler(manager, handlers[i]);
 
@@ -1098,6 +1338,9 @@ static void setup_ui(TabulaApp *app) {
     g_signal_connect(manager, "script-message-received::genie",     G_CALLBACK(on_genie_clicked), app);
     g_signal_connect(manager, "script-message-received::recalc",    G_CALLBACK(on_recalc), app);
     g_signal_connect(manager, "script-message-received::newSheet",  G_CALLBACK(on_new_sheet), app);
+    g_signal_connect(manager, "script-message-received::chart",     G_CALLBACK(on_chart_clicked), app);
+    g_signal_connect(manager, "script-message-received::addRow",    G_CALLBACK(on_add_row), app);
+    g_signal_connect(manager, "script-message-received::addCol",    G_CALLBACK(on_add_col), app);
 
     reload_grid(app);
     gtk_widget_show_all(GTK_WIDGET(app->window));
@@ -1108,8 +1351,8 @@ int main(int argc, char *argv[]) {
 
     static TabulaApp tabula_app;      /* static: sheet is large (BSS, not stack) */
     memset(&tabula_app, 0, sizeof(tabula_app));
-    tabula_app.sheet.rows = MAX_ROWS;
-    tabula_app.sheet.cols = MAX_COLS;
+    tabula_app.sheet.rows = DEFAULT_ROWS;   /* modest view; grows via +ROW / load */
+    tabula_app.sheet.cols = DEFAULT_COLS;
 
     setup_ui(&tabula_app);
     gtk_main();

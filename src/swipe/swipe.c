@@ -13,7 +13,19 @@ typedef struct {
     GtkWindow *window;
     WebKitWebView *web_view;
     char current_file[MAX_PATH];
+    char startup_file[MAX_PATH];   /* deck passed on the command line */
+    gboolean loaded;               /* page ready + startup deck injected */
 } SwipeApp;
+
+static void swipe_update_title(SwipeApp *app) {
+    const char *base = app->current_file[0]
+        ? (strrchr(app->current_file, '/') ? strrchr(app->current_file, '/') + 1
+                                           : app->current_file)
+        : "Untitled";
+    char *t = g_strdup_printf("%s - Swipe", base);
+    gtk_window_set_title(app->window, t);
+    g_free(t);
+}
 
 /* ---------------- embedded editor (HTML + JS) ---------------- */
 static const char *HTML_TEMPLATE =
@@ -53,6 +65,19 @@ static const char *HTML_TEMPLATE =
 "#present .stage { position:relative; }"
 "#present .pslide { width:960px; height:720px; position:relative; transform-origin:center; }"
 "#phint { position:fixed; bottom:8px; left:8px; color:#888; font-size:12px; z-index:1001; }"
+"#pcount { position:fixed; bottom:8px; right:12px; color:#888; font-size:13px; z-index:1001; }"
+"#pnotes { position:fixed; bottom:30px; left:8px; right:8px; max-height:24%; overflow:auto; color:#cfcfcf; background:rgba(0,0,0,.55); font-size:14px; line-height:1.4; padding:8px 12px; z-index:1001; display:none; white-space:pre-wrap; border-top:1px solid #333; }"
+"#pnav { position:fixed; top:50%; transform:translateY(-50%); width:100%; display:flex; justify-content:space-between; pointer-events:none; z-index:1002; }"
+"#pnav span { pointer-events:auto; color:#444; font-size:40px; padding:0 20px; cursor:pointer; user-select:none; }"
+"#pnav span:hover { color:#33ff33; }"
+"#printarea { display:none; }"
+"@page { size:landscape; margin:0; }"
+"@media print {"
+"  html,body { background:#fff; }"
+"  body>*:not(#printarea) { display:none !important; }"
+"  #printarea { display:block !important; }"
+"  .psheet { width:960px; height:720px; position:relative; overflow:hidden; page-break-after:always; }"
+"}"
 "#aboutov{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:99999;display:none;align-items:center;justify-content:center;}"
 "#aboutov.on{display:flex;}"
 "#aboutbox{background:#0a140f;border:2px solid #33ff33;color:#33ff33;max-width:480px;margin:16px;padding:20px;font-family:monospace;font-size:12px;line-height:1.7;box-shadow:0 0 24px rgba(51,255,51,.35);}"
@@ -66,12 +91,18 @@ static const char *HTML_TEMPLATE =
 "  <button class='btn' id='t_line' onclick='setTool(\"line\")'>LINE</button>"
 "  <button class='btn' onclick='addImage()'>IMAGE</button>"
 "  <div class='sep'></div>"
+"  <button class='btn' onclick='undo()' title='Ctrl+Z'>UNDO</button>"
+"  <button class='btn' onclick='redo()' title='Ctrl+Y'>REDO</button>"
+"  <div class='sep'></div>"
 "  <button class='btn' onclick='addSlide()'>+SLIDE</button>"
 "  <button class='btn' onclick='dupSlide()'>DUP</button>"
 "  <button class='btn' onclick='delSlide()'>-SLIDE</button>"
 "  <button class='btn' onclick='prevSlide()'>&#9664;</button>"
 "  <button class='btn' onclick='nextSlide()'>&#9654;</button>"
 "  <div class='sep'></div>"
+"  <button class='btn' onclick='dupObj()' title='Ctrl+D'>DUP OBJ</button>"
+"  <button class='btn' onclick='toFront()'>FRONT</button>"
+"  <button class='btn' onclick='toBack()'>BACK</button>"
 "  <button class='btn' onclick='deleteObj()'>DELETE</button>"
 "  <button class='btn' onclick='present()'>PRESENT</button>"
 "  <div class='sep'></div>"
@@ -79,6 +110,7 @@ static const char *HTML_TEMPLATE =
 "  <button class='btn' onclick='doLoad()'>LOAD</button>"
 "  <button class='btn' onclick='doSave()'>SAVE</button>"
 "  <button class='btn' onclick='doExport()'>EXPORT PPTX</button>"
+"  <button class='btn' onclick='exportPdf()'>PDF</button>"
 "  <div class='sep'></div>"
 "  <button class='btn' onclick='showAbout()'>ABOUT</button>"
 "  <input type='file' id='imgfile' accept='image/*' style='display:none'>"
@@ -92,10 +124,16 @@ static const char *HTML_TEMPLATE =
 "    <div class='prop'><label>Themes</label><div id='themes'></div></div>"
 "    <hr style='border-color:#1c3a25'>"
 "    <div id='textprops'>"
+"      <div class='prop'><label>Font</label>"
+"        <select id='font' onchange='updateSel()'>"
+"          <option>Arial</option><option>Georgia</option><option>Times New Roman</option>"
+"          <option>Courier New</option><option>Verdana</option><option>Impact</option>"
+"          <option>Comic Sans MS</option></select></div>"
 "      <div class='prop'><label>Font Size</label>"
 "        <input type='number' id='fontSize' value='24' min='6' max='200' onchange='updateSel()'></div>"
 "      <div class='prop'><label><input type='checkbox' id='bold' onchange='updateSel()'> Bold</label></div>"
 "      <div class='prop'><label><input type='checkbox' id='italic' onchange='updateSel()'> Italic</label></div>"
+"      <div class='prop'><label><input type='checkbox' id='underline' onchange='updateSel()'> Underline</label></div>"
 "      <div class='prop'><label><input type='checkbox' id='bullet' onchange='updateSel()'> Bullet list</label></div>"
 "      <div class='prop'><label>Align</label>"
 "        <select id='align' onchange='updateSel()'>"
@@ -110,12 +148,18 @@ static const char *HTML_TEMPLATE =
 "      <div class='prop'><label>Stroke</label>"
 "        <input type='color' id='stroke' value='#aa0000' onchange='updateSel()'></div>"
 "    </div>"
-"    <div class='prop' style='color:#888;font-size:10px'>Dbl-click text to edit.<br>Arrows nudge. Del removes.<br>Ctrl+S save. F5 present.</div>"
+"    <hr style='border-color:#1c3a25'>"
+"    <div class='prop'><label>Speaker Notes (this slide)</label>"
+"      <textarea id='notes' rows='4' style='width:100%;padding:4px;background:#030705;color:#33ff33;border:1px solid #33ff33;font-size:10px;font-family:monospace' onchange='setNotes(this.value)'></textarea></div>"
+"    <div class='prop' style='color:#888;font-size:10px'>Dbl-click text to edit.<br>Arrows nudge. Del removes.<br>Ctrl+Z undo, Ctrl+D duplicate.<br>Ctrl+S save. F5 present.</div>"
 "  </div>"
 "</div>"
 "<div id='status'>&gt; Ready</div>"
-"<div id='present'><div class='stage'><div class='pslide' id='pslide'></div></div></div>"
-"<div id='phint' style='display:none'>&larr;/&rarr; navigate &nbsp; Esc exit</div>"
+"<div id='present'><div class='stage'><div class='pslide' id='pslide'></div></div>"
+"<div id='pcount'></div><div id='pnotes'></div>"
+"<div id='pnav'><span onclick='pPrev(event)'>&#9664;</span><span onclick='pNext(event)'>&#9654;</span></div></div>"
+"<div id='phint' style='display:none'>click / &larr; &rarr; navigate &nbsp; Esc exit</div>"
+"<div id='printarea'></div>"
 "<script>"
 "var THEMES=[['White','#ffffff','#000000'],['Dark','#1e1e2e','#e0e0e0'],['Blue','#0b3d91','#ffffff'],['Warm','#fff4e0','#3a2a10'],['Slate','#2f3b47','#eef2f5'],['Mint','#e6fff2','#0a3d2a']];"
 "var deck={slides:[{bg:'#ffffff',objs:[]}]};"
@@ -125,6 +169,17 @@ static const char *HTML_TEMPLATE =
 "function slide(){return deck.slides[cur];}"
 "function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}"
 "function clamp(v,a,b){return Math.max(a,Math.min(b,v));}"
+""
+"/* ---- undo/redo + object clipboard + z-order ---- */"
+"var _undo=[],_redo=[],clip=null;"
+"function snapshot(){_undo.push(JSON.stringify(deck));if(_undo.length>80)_undo.shift();_redo=[];}"
+"function undo(){if(!_undo.length)return;_redo.push(JSON.stringify(deck));deck=JSON.parse(_undo.pop());if(cur>=deck.slides.length)cur=deck.slides.length-1;sel=null;renderAll();}"
+"function redo(){if(!_redo.length)return;_undo.push(JSON.stringify(deck));deck=JSON.parse(_redo.pop());if(cur>=deck.slides.length)cur=deck.slides.length-1;sel=null;renderAll();}"
+"function copyObj(){if(sel)clip=JSON.parse(JSON.stringify(sel));}"
+"function pasteObj(){if(!clip)return;snapshot();var o=JSON.parse(JSON.stringify(clip));o.id=newId();o.x=clamp((o.x||0)+20,0,960-o.w);o.y=clamp((o.y||0)+20,0,720-o.h);slide().objs.push(o);sel=o;renderAll();}"
+"function dupObj(){copyObj();pasteObj();}"
+"function toFront(){if(!sel)return;snapshot();var a=slide().objs,i=a.indexOf(sel);if(i>=0){a.splice(i,1);a.push(sel);}renderAll();}"
+"function toBack(){if(!sel)return;snapshot();var a=slide().objs,i=a.indexOf(sel);if(i>=0){a.splice(i,1);a.unshift(sel);}renderAll();}"
 ""
 "function setTool(t){tool=t;['text','rect','ellipse','line'].forEach(function(k){var e=document.getElementById('t_'+k);if(e)e.classList.toggle('on',k===t);});}"
 ""
@@ -136,8 +191,10 @@ static const char *HTML_TEMPLATE =
 "  if(o.type==='text'){"
 "    el.className='obj text-obj';"
 "    el.style.fontSize=(o.size||24)+'px';"
+"    el.style.fontFamily=o.font||'Arial';"
 "    el.style.fontWeight=o.bold?'bold':'normal';"
 "    el.style.fontStyle=o.italic?'italic':'normal';"
+"    el.style.textDecoration=o.underline?'underline':'none';"
 "    el.style.color=o.color||'#000';"
 "    el.style.textAlign=(o.align==1?'center':o.align==2?'right':'left');"
 "    if(o.bullet){"
@@ -199,6 +256,7 @@ static const char *HTML_TEMPLATE =
 "}"
 ""
 "function startEdit(o,el){"
+"  snapshot();"
 "  editing=o; sel=o;"
 "  el.classList.remove('sel');"
 "  el.innerHTML=esc(o.text||'');" /* edit raw text, bullets applied on blur */
@@ -217,6 +275,7 @@ static const char *HTML_TEMPLATE =
 "/* ---- global drag/resize ---- */"
 "document.addEventListener('mousemove',function(e){"
 "  if(!action) return;"
+"  if(!action.snapped){ snapshot(); action.snapped=true; }"  /* one undo step per drag */
 "  var o=action.o;"
 "  var dx=e.clientX-action.sx, dy=e.clientY-action.sy;"
 "  if(action.mode==='move'){"
@@ -246,16 +305,15 @@ static const char *HTML_TEMPLATE =
 "  else if(tool==='rect') o={id:newId(),type:'rect',x:x,y:y,w:200,h:120,fill:'#4472c4',stroke:'#2a4a90'};"
 "  else if(tool==='ellipse') o={id:newId(),type:'ellipse',x:x,y:y,w:180,h:180,fill:'#ed7d31',stroke:'#b45a1e'};"
 "  else if(tool==='line') o={id:newId(),type:'line',x:x,y:y,w:200,h:120,stroke:'#000000'};"
-"  if(o){ slide().objs.push(o); sel=o; renderAll();"
-"    if(tool==='text'){ var els=document.getElementById('slide').children; }"
-"  }"
+"  if(o){ snapshot(); slide().objs.push(o); sel=o; renderAll(); }"
 "});"
 ""
-"function deleteObj(){ if(sel){ var i=slide().objs.indexOf(sel); if(i>=0) slide().objs.splice(i,1); sel=null; } renderAll(); }"
+"function deleteObj(){ if(sel){ snapshot(); var i=slide().objs.indexOf(sel); if(i>=0) slide().objs.splice(i,1); sel=null; } renderAll(); }"
 ""
 "/* ---- props ---- */"
 "function syncProps(){"
 "  document.getElementById('bgColor').value=slide().bg;"
+"  document.getElementById('notes').value=slide().notes||'';"
 "  var tp=document.getElementById('textprops'), sp=document.getElementById('shapeprops');"
 "  if(sel && sel.type==='text'){"
 "    tp.style.display='block'; sp.style.display='none';"
@@ -263,6 +321,8 @@ static const char *HTML_TEMPLATE =
 "    document.getElementById('bold').checked=!!sel.bold;"
 "    document.getElementById('italic').checked=!!sel.italic;"
 "    document.getElementById('bullet').checked=!!sel.bullet;"
+"    document.getElementById('underline').checked=!!sel.underline;"
+"    document.getElementById('font').value=sel.font||'Arial';"
 "    document.getElementById('align').value=sel.align||0;"
 "    document.getElementById('color').value=sel.color||'#000000';"
 "  } else if(sel && (sel.type==='rect'||sel.type==='ellipse'||sel.type==='line')){"
@@ -273,11 +333,14 @@ static const char *HTML_TEMPLATE =
 "}"
 "function updateSel(){"
 "  if(!sel) return;"
+"  snapshot();"
 "  if(sel.type==='text'){"
 "    sel.size=parseInt(document.getElementById('fontSize').value)||24;"
 "    sel.bold=document.getElementById('bold').checked;"
 "    sel.italic=document.getElementById('italic').checked;"
 "    sel.bullet=document.getElementById('bullet').checked;"
+"    sel.underline=document.getElementById('underline').checked;"
+"    sel.font=document.getElementById('font').value;"
 "    sel.align=parseInt(document.getElementById('align').value)||0;"
 "    sel.color=document.getElementById('color').value;"
 "  } else {"
@@ -286,25 +349,26 @@ static const char *HTML_TEMPLATE =
 "  }"
 "  renderAll();"
 "}"
-"function setBg(c){ slide().bg=c; renderAll(); }"
+"function setBg(c){ snapshot(); slide().bg=c; renderAll(); }"
 ""
 "function buildThemes(){"
 "  var t=document.getElementById('themes'); t.innerHTML='';"
 "  THEMES.forEach(function(th){"
 "    var s=document.createElement('span'); s.className='swatch'; s.title=th[0]; s.style.background=th[1];"
-"    s.onclick=function(){ slide().bg=th[1]; slide().objs.forEach(function(o){ if(o.type==='text') o.color=th[2]; }); renderAll(); };"
+"    s.onclick=function(){ snapshot(); slide().bg=th[1]; slide().objs.forEach(function(o){ if(o.type==='text') o.color=th[2]; }); renderAll(); };"
 "    t.appendChild(s);"
 "  });"
 "}"
 ""
 "/* ---- slides ---- */"
-"function blankSlide(){ return {bg:'#ffffff',objs:[]}; }"
-"function addSlide(){ deck.slides.splice(cur+1,0,blankSlide()); cur++; sel=null; renderAll(); }"
-"function dupSlide(){ var c=JSON.parse(JSON.stringify(slide())); deck.slides.splice(cur+1,0,c); cur++; sel=null; renderAll(); }"
-"function delSlide(){ if(deck.slides.length>1){ deck.slides.splice(cur,1); cur=Math.max(0,cur-1); } else { deck.slides[0]=blankSlide(); } sel=null; renderAll(); }"
+"function blankSlide(){ return {bg:'#ffffff',objs:[],notes:''}; }"
+"function setNotes(v){ snapshot(); slide().notes=v; }"
+"function addSlide(){ snapshot(); deck.slides.splice(cur+1,0,blankSlide()); cur++; sel=null; renderAll(); }"
+"function dupSlide(){ snapshot(); var c=JSON.parse(JSON.stringify(slide())); deck.slides.splice(cur+1,0,c); cur++; sel=null; renderAll(); }"
+"function delSlide(){ snapshot(); if(deck.slides.length>1){ deck.slides.splice(cur,1); cur=Math.max(0,cur-1); } else { deck.slides[0]=blankSlide(); } sel=null; renderAll(); }"
 "function prevSlide(){ if(cur>0){cur--; sel=null; renderAll();} }"
 "function nextSlide(){ if(cur<deck.slides.length-1){cur++; sel=null; renderAll();} }"
-"function moveSlide(i,d){ var j=i+d; if(j<0||j>=deck.slides.length) return; var t=deck.slides[i]; deck.slides[i]=deck.slides[j]; deck.slides[j]=t; if(cur===i)cur=j; else if(cur===j)cur=i; renderAll(); }"
+"function moveSlide(i,d){ var j=i+d; if(j<0||j>=deck.slides.length) return; snapshot(); var t=deck.slides[i]; deck.slides[i]=deck.slides[j]; deck.slides[j]=t; if(cur===i)cur=j; else if(cur===j)cur=i; renderAll(); }"
 ""
 "function renderThumbs(){"
 "  var c=document.getElementById('thumbs'); c.innerHTML='';"
@@ -334,7 +398,7 @@ static const char *HTML_TEMPLATE =
 "    img.onload=function(){"
 "      var w=img.width,h=img.height,mx=480,my=360;"
 "      var sc=Math.min(1,mx/w,my/h); w=Math.round(w*sc); h=Math.round(h*sc);"
-"      var o={id:newId(),type:'image',x:60,y:60,w:w,h:h,src:rd.result};"
+"      snapshot(); var o={id:newId(),type:'image',x:60,y:60,w:w,h:h,src:rd.result};"
 "      slide().objs.push(o); sel=o; renderAll();"
 "    };"
 "    img.src=rd.result;"
@@ -352,9 +416,23 @@ static const char *HTML_TEMPLATE =
 "  document.querySelector('#present .stage').style.width=(960*sc)+'px';"
 "  document.querySelector('#present .stage').style.height=(720*sc)+'px';"
 "  ps.style.transformOrigin='top left';"
+"  document.getElementById('pcount').textContent=(presIdx+1)+' / '+deck.slides.length;"
+"  var nt=deck.slides[presIdx].notes||''; var pn=document.getElementById('pnotes');"
+"  pn.textContent=nt; pn.style.display=nt?'block':'none';"
 "}"
+"function pNext(e){ if(e)e.stopPropagation(); if(presIdx<deck.slides.length-1){presIdx++;renderPresent();} }"
+"function pPrev(e){ if(e)e.stopPropagation(); if(presIdx>0){presIdx--;renderPresent();} }"
 "function present(){ presMode=true; presIdx=cur; document.getElementById('present').style.display='flex';"
 "  document.getElementById('phint').style.display='block'; renderPresent(); }"
+"document.getElementById('present').addEventListener('click',function(ev){"
+"  if(ev.target.id==='pnotes'||ev.target.closest('#pnav')) return; pNext(); });"
+"/* ---- PDF export: render every slide to a print sheet, then print-to-PDF ---- */"
+"function exportPdf(){ var pa=document.getElementById('printarea'); pa.innerHTML='';"
+"  deck.slides.forEach(function(sl){ var pg=document.createElement('div'); pg.className='psheet';"
+"    pg.style.background=sl.bg;"
+"    sl.objs.forEach(function(o){ var el=document.createElement('div'); paint(el,o); pg.appendChild(el); });"
+"    pa.appendChild(pg); });"
+"  window.webkit.messageHandlers.pdf.postMessage(''); }"
 "function exitPresent(){ presMode=false; document.getElementById('present').style.display='none';"
 "  document.getElementById('phint').style.display='none'; }"
 "window.addEventListener('resize',function(){ if(presMode) renderPresent(); });"
@@ -372,10 +450,16 @@ static const char *HTML_TEMPLATE =
 "  if(ae && (ae.tagName==='INPUT'||ae.tagName==='SELECT'||ae.isContentEditable)) return;"
 "  if(e.key==='F5'){ present(); e.preventDefault(); return; }"
 "  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='s'){ doSave(); e.preventDefault(); return; }"
+"  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'){ (e.shiftKey?redo:undo)(); e.preventDefault(); return; }"
+"  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='y'){ redo(); e.preventDefault(); return; }"
+"  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='c'){ copyObj(); e.preventDefault(); return; }"
+"  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='v'){ pasteObj(); e.preventDefault(); return; }"
+"  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='d'){ dupObj(); e.preventDefault(); return; }"
 "  if(e.key==='Delete'||e.key==='Backspace'){ if(sel){ deleteObj(); e.preventDefault(); } return; }"
 "  if(e.key==='PageDown'||e.key==='n'||e.key==='N'){ nextSlide(); e.preventDefault(); return; }"
 "  if(e.key==='PageUp'||e.key==='p'||e.key==='P'){ prevSlide(); e.preventDefault(); return; }"
-"  if(sel){"
+"  if(sel && (e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown')){"
+"    snapshot();"
 "    var step=e.shiftKey?1:10;"
 "    if(e.key==='ArrowLeft'){ sel.x=clamp(sel.x-step,0,960-sel.w); render(); e.preventDefault(); }"
 "    else if(e.key==='ArrowRight'){ sel.x=clamp(sel.x+step,0,960-sel.w); render(); e.preventDefault(); }"
@@ -534,6 +618,7 @@ static void on_save(WebKitUserContentManager *manager,
         if (f) { fputs(json, f); fclose(f); g_print("Saved to %s\n", path); }
         else g_printerr("Could not write %s\n", path);
         g_strlcpy(app->current_file, path, MAX_PATH);
+        swipe_update_title(app);
         g_free(path);
     }
     g_free(json);
@@ -554,6 +639,7 @@ static void on_load(WebKitUserContentManager *manager,
         g_free(script);
         g_free(contents);
         g_strlcpy(app->current_file, path, MAX_PATH);
+        swipe_update_title(app);
         g_print("Loaded %s\n", path);
     }
     g_free(path);
@@ -633,6 +719,54 @@ static void on_export(WebKitUserContentManager *manager,
     g_free(path);
 }
 
+static void swipe_on_print_finished(WebKitPrintOperation *op, gpointer d) {
+    (void)d; g_object_unref(op);
+}
+
+/* Print-to-PDF the hidden #printarea (one .psheet per slide) built by JS. */
+static void on_pdf(WebKitUserContentManager *manager,
+                   WebKitJavascriptResult *js_result, gpointer user_data) {
+    (void)manager; (void)js_result;
+    SwipeApp *app = user_data;
+    char *path = choose_file(app, TRUE, "PDF (*.pdf)", "*.pdf", "presentation.pdf");
+    if (!path) return;
+    WebKitPrintOperation *op = webkit_print_operation_new(app->web_view);
+    GtkPrintSettings *st = gtk_print_settings_new();
+    char *uri = g_strdup_printf("file://%s", path);
+    gtk_print_settings_set(st, GTK_PRINT_SETTINGS_OUTPUT_URI, uri);
+    gtk_print_settings_set(st, "output-file-format", "pdf");
+    gtk_print_settings_set_orientation(st, GTK_PAGE_ORIENTATION_LANDSCAPE);
+    webkit_print_operation_set_print_settings(op, st);
+    g_signal_connect(op, "finished", G_CALLBACK(swipe_on_print_finished), NULL);
+    webkit_print_operation_print(op);
+    g_free(uri); g_object_unref(st); g_free(path);
+    g_print("Exported PDF\n");
+}
+
+/* Inject a saved .json deck (a JSON object literal) via loadDeck(<json>). */
+static void inject_deck_file(SwipeApp *app, const char *path) {
+    gchar *contents = NULL; gsize len = 0;
+    if (g_file_get_contents(path, &contents, &len, NULL)) {
+        gchar *script = g_strdup_printf("loadDeck(%s);", contents);
+        webkit_web_view_evaluate_javascript(app->web_view, script, -1,
+                                             NULL, NULL, NULL, NULL, NULL);
+        g_free(script); g_free(contents);
+        g_strlcpy(app->current_file, path, MAX_PATH);
+        swipe_update_title(app);
+        g_print("Loaded %s\n", path);
+    }
+}
+
+static void on_load_changed(WebKitWebView *wv, WebKitLoadEvent ev,
+                            gpointer user_data) {
+    (void)wv;
+    SwipeApp *app = user_data;
+    if (ev == WEBKIT_LOAD_FINISHED && !app->loaded) {
+        app->loaded = TRUE;
+        if (app->startup_file[0]) inject_deck_file(app, app->startup_file);
+    }
+}
+
 /* ---------------- UI ---------------- */
 
 static void setup_ui(SwipeApp *app) {
@@ -655,10 +789,14 @@ static void setup_ui(SwipeApp *app) {
     webkit_user_content_manager_register_script_message_handler(manager, "save");
     webkit_user_content_manager_register_script_message_handler(manager, "load");
     webkit_user_content_manager_register_script_message_handler(manager, "exportpptx");
+    webkit_user_content_manager_register_script_message_handler(manager, "pdf");
 
     g_signal_connect(manager, "script-message-received::save", G_CALLBACK(on_save), app);
     g_signal_connect(manager, "script-message-received::load", G_CALLBACK(on_load), app);
     g_signal_connect(manager, "script-message-received::exportpptx", G_CALLBACK(on_export), app);
+    g_signal_connect(manager, "script-message-received::pdf", G_CALLBACK(on_pdf), app);
+
+    g_signal_connect(app->web_view, "load-changed", G_CALLBACK(on_load_changed), app);
 
     webkit_web_view_load_html(app->web_view, HTML_TEMPLATE, NULL);
     gtk_widget_show_all(GTK_WIDGET(app->window));
@@ -667,7 +805,7 @@ static void setup_ui(SwipeApp *app) {
 int main(int argc, char *argv[]) {
     gtk_init(&argc, &argv);
     SwipeApp app = {0};
-    g_strlcpy(app.current_file, "presentation.json", MAX_PATH);
+    if (argc > 1) g_strlcpy(app.startup_file, argv[1], MAX_PATH);
     setup_ui(&app);
     gtk_main();
     return 0;
