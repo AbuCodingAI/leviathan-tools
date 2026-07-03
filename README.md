@@ -1,6 +1,6 @@
 # LeviathanOS Tools
 
-Native tools of LeviathanOS — **v4.3** — **binaries *and* full source**.
+Native tools of LeviathanOS — **Pv4.3** — **binaries *and* full source**.
 Lightweight tools for a lightweight OS (old hardware, especially old Intel Macs).
 
 - Prebuilt binaries in [`bin/`](bin/) — for x86-64 Linux, just run them.
